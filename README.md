@@ -14,7 +14,7 @@ Dealing with slow-running SQL queries can be frustrating and costly. After years
 
 ## Explore More
 
-Feel free to explore the projects, try them out, and provide feedback. Whether you’re looking to improve your data processing performance, cut costs, or simply explore new ways to utilize Snowflake, there’s something here for you.
+Feel free to explore the projects, try them out, and provide feedback. Whether you’re looking to improve your data processing performance, cut costs, or simply to explore new ways to utilize Snowflake.
 
 ### Topics Covered:
 - **Snowflake**: Harness the power of Snowflake for your data warehousing needs.
