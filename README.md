@@ -25,6 +25,6 @@ Feel free to explore the projects, try them out, and provide feedback. Whether y
 
 For more insights and detailed articles, check out my [Medium page](https://medium.com/@daniel20lacouture) where I share stories, tips, and tutorials on using these technologies effectively.
 
-Thank you for visiting my repository. Happy coding! 😊
+Thank you for visiting my repository. Happy coding! 
 
 ---
