@@ -8,5 +8,7 @@ Dealing with slow-running SQL queries can be frustrating and costly. After years
 - **Boost Performance**: Faster query execution times will enhance your overall data processing and analysis speed.
 - **Simplify Optimization**: Let Snowflake Cortex handle the heavy lifting of query optimization, so you can focus on what matters most. Simply copy, paste, and run.
 
+- (https://medium.com/@daniel20lacouture/getting-started-with-cortex-analyst-in-snowflake-cortex-analyst-yaml-file-generator-application-%EF%B8%8F-2b78e930e688)
+
 ![SQL Query Optimizer](https://github.com/Snowflake-Labs/snowflake-demo-streamlit/raw/main/SQL%20Query%20Optimizer%20App%20using%20Snowflake%20Cortex/sql-query-optimizer.png)
 
