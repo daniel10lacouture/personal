@@ -50,3 +50,5 @@ This Streamlit application simplifies the creation of YAML files for [Snowflake'
 5. **Reset**: If needed, reset the application to clear all data and start fresh.
 
 For further details, refer to the [Snowflake Documentation](https://docs.snowflake.com/LIMITEDACCESS/snowflake-cortex/semantic-model-spec#label-semantic-model-tips).
+
+![Yaml file generator](https://github.com/daniel10lacouture/personal/blob/main/Streamlit%20in%20Snowflake/YAML%20file%20generator/cortex-analyst-yaml-generator.png)
