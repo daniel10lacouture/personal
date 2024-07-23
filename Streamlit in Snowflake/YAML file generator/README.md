@@ -15,6 +15,9 @@ This Streamlit application simplifies the creation of YAML files for [Snowflake'
 
 ## Instructions
 
+### 0. Setup Code
+- **Purpose**: Create a SiS applciaiotn. Copy and paste the .py file from this repo.
+  
 ### 1. Welcome Page
 - **Purpose**: Provides an overview of the app and instructions on how to use it.
 - **Details**: Explains the features and steps to create a YAML file for Snowflake's Cortex Analyst.
