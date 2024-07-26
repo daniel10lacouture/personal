@@ -4,7 +4,6 @@ from snowflake.snowpark.context import get_active_session
 import io
 import yaml
 
-
 # Function to show the welcome page
 def show_welcome_page():
     st.title("Cortex Analyst YAML Generator")
@@ -13,8 +12,7 @@ def show_welcome_page():
     st.markdown("""
 ### Description
 
-
-The YAML File generator app simplifies creating YAML files for [Snowflake's Cortex Analyst](https://docs.snowflake.com/LIMITEDACCESS/snowflake-cortex/cortex-analyst-overview#overview). Users can select databases, schemas, and tables, and the tool auto-fills the YAML structure with relevant table info. The generated files can be downloaded or copied for use in creating semantic models for Cortex Analyst. _While it quickly populates most required fields, some additional details will still need to be added_.
+The YAML File generator app simplifies creating YAML files for [Snowflake's Cortex Analyst](https://docs.snowflake.com/LIMITEDACCESS/snowflake-cortex/cortex-analyst-overview#overview). Users can select databases, schemas, and tables or views, and the tool auto-fills the YAML structure with relevant table or view info. The generated files can be downloaded or copied for use in creating semantic models for Cortex Analyst. _While it quickly populates most required fields, some additional details will still need to be added_.
 
 #### Instructions
 
@@ -26,9 +24,9 @@ The YAML File generator app simplifies creating YAML files for [Snowflake's Cort
 2. **Table Definition Page:**
    - Select Database: Choose the database from the dropdown menu.
    - Select Schema: Select the schema associated with the chosen database.
-   - Select Table: Pick the table you want to include in the YAML file. 
-   - Click on "Add Table to YAML" to add the selected table to the YAML structure. The YAML display will be updated accordingly.
-   - Download YAML: Once your tables are added, you can download the generated YAML file by clicking on the "Download YAML file" button.
+   - Select Table or View: Pick the table or view you want to include in the YAML file. 
+   - Click on "Add Table or View to YAML" to add the selected table or view to the YAML structure. The YAML display will be updated accordingly.
+   - Download YAML: Once your tables or views are added, you can download the generated YAML file by clicking on the "Download YAML file" button.
 
 3. **Reset Application:**
    - Navigate to the "Reset" page from the sidebar.
@@ -40,7 +38,6 @@ Feel free to navigate between pages using the sidebar navigation to complete you
 """)
 
 st.image("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTGtsjtT26xLbvGO_eRAcJJ2drgv6wC9S7REQ&s")
-
 
 def show_get_started_page():
     st.title("Get Started")
@@ -73,10 +70,11 @@ def show_table_definition_page():
     schemas = [row['name'] for row in schemas_df]
     schema_selector = st.selectbox("Select Schema", schemas)
 
-    # Show tables based on the selected schema and create a select box for table selection
+    # Show tables and views based on the selected schema and create a select box for table or view selection
     tables_df = session.sql(f"SHOW TABLES IN {database_selector}.{schema_selector}").collect()
-    tables = [row['name'] for row in tables_df]
-    table_selector = st.selectbox("Select Table", tables)
+    views_df = session.sql(f"SHOW VIEWS IN {database_selector}.{schema_selector}").collect()
+    tables_and_views = [row['name'] for row in tables_df] + [row['name'] for row in views_df]
+    table_or_view_selector = st.selectbox("Select Table or View", tables_and_views)
 
     # Display the current YAML structure
     yaml_template = {
@@ -136,24 +134,24 @@ def show_table_definition_page():
     if 'yaml_structure' not in st.session_state:
         st.session_state['yaml_structure'] = yaml_template
     
-    # Add table to YAML structure
-    if st.button("Add Table to YAML"):
+    # Add table or view to YAML structure
+    if st.button("Add Table or View to YAML"):
         if len(st.session_state['tables']) < 3:
-            st.session_state['tables'].append(table_selector)
+            st.session_state['tables'].append(table_or_view_selector)
 
-            table_definition_df = session.sql(f"DESCRIBE TABLE {database_selector}.{schema_selector}.{table_selector}").collect()
+            table_definition_df = session.sql(f"DESCRIBE TABLE {database_selector}.{schema_selector}.{table_or_view_selector}").collect()
             
             columns = [row['name'] for row in table_definition_df]
             data_types = [row['type'] for row in table_definition_df]
             
-            # Add table definition to YAML structure
+            # Add table or view definition to YAML structure
             table_entry = {
-                "name": table_selector,
+                "name": table_or_view_selector,
                 "description": "",
                 "base_table": {
                     "database": database_selector,
                     "schema": schema_selector,
-                    "table": table_selector
+                    "table": table_or_view_selector
                 },
                 "dimensions": [],
                 "time_dimensions": [],
@@ -170,17 +168,7 @@ def show_table_definition_page():
 
             # Check for time dimensions, dimension columns, and measure columns
             for column, data_type in zip(columns, data_types):
-                # if data_type.lower() == "date":
-                #     time_dimension_entry = {
-                #         "name": column,
-                #         "expr": column,
-                #         "description": "<string>",
-                #         "unique": True,
-                #         "data_type": "date",
-                #         "synonyms": ["<array of strings>"]
-                #     }
-                #     table_entry["time_dimensions"].append(time_dimension_entry)
-                if data_type.upper() in ["DATE", "DATETIME", "TIME", "TIMESTAMP", "TIMESTAMP_LTZ(9)", "TIMESTAMP_NTZ", "TIMESTAMP_TZ"]:
+                if data_type.upper().startswith(("DATE", "DATETIME", "TIME", "TIMESTAMP", "TIMESTAMP_LTZ", "TIMESTAMP_NTZ", "TIMESTAMP_TZ")):
                     time_dimension_entry = {
                         "name": column,
                         "expr": column,
@@ -190,7 +178,7 @@ def show_table_definition_page():
                         "synonyms": ["<array of strings>"]
                     }
                     table_entry["time_dimensions"].append(time_dimension_entry)
-                if data_type.upper() in ["VARCHAR(50)", "VARCHAR(16777216)", "VARCHAR(1)", "VARCHAR(10)", "VARCHAR(20)", "VARCHAR(30)", "CHAR", "CHARACTER", "STRING", "TEXT", "BINARY", "VARBINARY"]:
+                if data_type.upper().startswith(("VARCHAR", "CHAR", "CHARACTER", "STRING", "TEXT", "BINARY", "VARBINARY")):
                     dimension_entry = {
                         "name": column,
                         "expr": column,
@@ -200,7 +188,7 @@ def show_table_definition_page():
                         "synonyms": ["<array of strings>"]
                     }
                     table_entry["dimensions"].append(dimension_entry)
-                if data_type.upper() in ["NUMBER", "DECIMAL", "NUMERIC", "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"]:
+                if data_type.upper().startswith(("NUMBER", "DECIMAL", "NUMERIC", "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL")):
                     measure_entry = {
                         "name": column,
                         "expr": column,
@@ -226,6 +214,9 @@ def show_table_definition_page():
         file_name="semantic_model.yaml",
         mime="text/plain"
     )
+
+
+
 
 # Function to reset the app
 def reset_app():
