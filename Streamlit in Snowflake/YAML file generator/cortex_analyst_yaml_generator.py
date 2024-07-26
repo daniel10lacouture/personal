@@ -168,32 +168,33 @@ def show_table_definition_page():
 
             # Check for time dimensions, dimension columns, and measure columns
             for column, data_type in zip(columns, data_types):
-                if data_type.upper().startswith(("DATE", "DATETIME", "TIME", "TIMESTAMP", "TIMESTAMP_LTZ", "TIMESTAMP_NTZ", "TIMESTAMP_TZ")):
+                data_type_simple = data_type.split('(')[0].upper()
+                if data_type_simple in ["DATE", "DATETIME", "TIME", "TIMESTAMP", "TIMESTAMP_LTZ", "TIMESTAMP_NTZ", "TIMESTAMP_TZ"]:
                     time_dimension_entry = {
                         "name": column,
                         "expr": column,
                         "description": "<string>",
                         "unique": True,
-                        "data_type": data_type.upper(),
+                        "data_type": data_type_simple,
                         "synonyms": ["<array of strings>"]
                     }
                     table_entry["time_dimensions"].append(time_dimension_entry)
-                if data_type.upper().startswith(("VARCHAR", "CHAR", "CHARACTER", "STRING", "TEXT", "BINARY", "VARBINARY")):
+                if data_type_simple in ["VARCHAR", "CHAR", "CHARACTER", "STRING", "TEXT", "BINARY", "VARBINARY"]:
                     dimension_entry = {
                         "name": column,
                         "expr": column,
                         "description": "<string>",
-                        "data_type": data_type.upper(),
+                        "data_type": data_type_simple,
                         "unique": False,
                         "synonyms": ["<array of strings>"]
                     }
                     table_entry["dimensions"].append(dimension_entry)
-                if data_type.upper().startswith(("NUMBER", "DECIMAL", "NUMERIC", "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL")):
+                if data_type_simple in ["NUMBER", "DECIMAL", "NUMERIC", "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE", "DOUBLE PRECISION", "REAL"]:
                     measure_entry = {
                         "name": column,
                         "expr": column,
                         "description": "<string>",
-                        "data_type": data_type.upper(),
+                        "data_type": data_type_simple,
                         "default_aggregation": "<aggregate function>",
                         "synonyms": ["<array of strings>"]
                     }
@@ -215,7 +216,7 @@ def show_table_definition_page():
         mime="text/plain"
     )
 
-
+# Function to reset
 
 
 # Function to reset the app
