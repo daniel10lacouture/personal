@@ -1,6 +1,6 @@
 # Personal Projects by Daniel Lacouture 🚀
 
-Welcome to my public repository where I share various personal projects that I work on. This space is dedicated to exploring and utilizing cutting-edge technologies on Snowflake like Streamlit and Snowflake Container Services to create innovative solutions. Here, you’ll find applications and tools designed to help clients maximize the efficiency and effectiveness of their Snowflake investment.
+Welcome to my public repository where I share various personal projects that I work on. This space is dedicated to exploring and utilizing cutting-edge technologies s to create innovative solutions. Here, you’ll find applications and tools designed to help clients maximize the efficiency and effectiveness of their tech investments
 
 ## Featured Project: Getting Started with Streamlit in Snowflake (SiS) ❄️
 
