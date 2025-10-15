@@ -1,0 +1,2631 @@
+{
+  "datasets": [
+    {
+      "name": "cost_usage_daily",
+      "displayName": "Cost and Usage (daily)",
+      "queryLines": [
+        "WITH usage_priced AS (\n",
+        "  SELECT\n",
+        "    u.usage_start_time,\n",
+        "    u.sku_name,\n",
+        "    u.usage_unit,\n",
+        "    u.usage_quantity,\n",
+        "    CAST(p.pricing.effective_list.default AS DOUBLE) AS unit_price\n",
+        "  FROM system.billing.usage u\n",
+        "  LEFT JOIN system.billing.list_prices p\n",
+        "    ON u.sku_name = p.sku_name\n",
+        "   AND u.usage_start_time >= p.price_start_time\n",
+        "   AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "  WHERE u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        ")\n",
+        "SELECT\n",
+        "  date_trunc('day', usage_start_time) AS day,\n",
+        "  sku_name,\n",
+        "  SUM(CASE WHEN usage_unit = 'DBU' THEN usage_quantity ELSE 0 END) AS dbu,\n",
+        "  SUM(CASE WHEN usage_unit = 'DBU' THEN usage_quantity * unit_price ELSE 0 END) AS cost_usd\n",
+        "FROM usage_priced\n",
+        "GROUP BY date_trunc('day', usage_start_time), sku_name\n"
+      ],
+      "catalog": "system",
+      "schema": "billing"
+    },
+    {
+      "name": "job_runs_detail",
+      "displayName": "Job Runs Detail",
+      "queryLines": [
+        "SELECT\n",
+        "  jrt.account_id,\n",
+        "  jrt.workspace_id,\n",
+        "  jrt.job_id,\n",
+        "  jrt.run_id,\n",
+        "  COALESCE(j.name, jrt.run_name) AS job_name,\n",
+        "  jrt.run_type,\n",
+        "  jrt.trigger_type,\n",
+        "  jrt.period_start_time,\n",
+        "  jrt.period_end_time,\n",
+        "  (UNIX_TIMESTAMP(jrt.period_end_time) - UNIX_TIMESTAMP(jrt.period_start_time)) AS duration_sec,\n",
+        "  jrt.result_state,\n",
+        "  jrt.termination_code,\n",
+        "  jrt.compute_ids,\n",
+        "  jrt.job_parameters\n",
+        "FROM system.lakeflow.job_run_timeline jrt\n",
+        "LEFT JOIN system.lakeflow.jobs j\n",
+        "  ON jrt.workspace_id = j.workspace_id\n",
+        " AND jrt.job_id       = j.job_id\n",
+        "WHERE jrt.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "job_reliability_daily",
+      "displayName": "Job Reliability (daily)",
+      "queryLines": [
+        "SELECT\n",
+        "  job_id,\n",
+        "  date_trunc('day', period_start_time) AS day,\n",
+        "  COUNT(*) AS runs,\n",
+        "  SUM(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS succeeded_runs,\n",
+        "  SUM(CASE WHEN UPPER(result_state) = 'FAILED'  THEN 1 ELSE 0 END) AS failed_runs,\n",
+        "  CASE WHEN COUNT(*) = 0 THEN NULL\n",
+        "       ELSE SUM(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) / COUNT(*)\n",
+        "  END AS success_rate,\n",
+        "  percentile_approx(\n",
+        "    UNIX_TIMESTAMP(period_end_time) - UNIX_TIMESTAMP(period_start_time),\n",
+        "    0.95\n",
+        "  ) AS p95_duration_sec\n",
+        "FROM system.lakeflow.job_run_timeline\n",
+        "WHERE period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY job_id, date_trunc('day', period_start_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "job_task_mix",
+      "displayName": "Job Task Mix",
+      "queryLines": [
+        "SELECT\n",
+        "  jt.job_id,\n",
+        "  jt.task_key,\n",
+        "  date_trunc('day', t.period_start_time) AS day,\n",
+        "  COUNT(*) AS task_runs,\n",
+        "  AVG(UNIX_TIMESTAMP(t.period_end_time) - UNIX_TIMESTAMP(t.period_start_time)) AS avg_task_duration_sec\n",
+        "FROM system.lakeflow.job_tasks jt\n",
+        "JOIN system.lakeflow.job_task_run_timeline t\n",
+        "  ON t.workspace_id = jt.workspace_id\n",
+        " AND t.job_id       = jt.job_id\n",
+        " AND t.task_key     = jt.task_key\n",
+        "WHERE t.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY jt.job_id, jt.task_key, date_trunc('day', t.period_start_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "pipeline_updates_detail",
+      "displayName": "Pipeline Updates Detail",
+      "queryLines": [
+        "SELECT\n",
+        "  put.pipeline_id,\n",
+        "  p.name AS pipeline_name,\n",
+        "  put.update_id,\n",
+        "  put.update_type,\n",
+        "  put.trigger_type,\n",
+        "  put.period_start_time,\n",
+        "  put.period_end_time,\n",
+        "  (UNIX_TIMESTAMP(put.period_end_time) - UNIX_TIMESTAMP(put.period_start_time)) AS duration_sec,\n",
+        "  put.result_state\n",
+        "FROM system.lakeflow.pipeline_update_timeline put\n",
+        "LEFT JOIN system.lakeflow.pipelines p\n",
+        "  ON put.workspace_id = p.workspace_id\n",
+        " AND put.pipeline_id  = p.pipeline_id\n",
+        "WHERE put.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "pipeline_reliability_daily",
+      "displayName": "Pipeline Reliability (daily)",
+      "queryLines": [
+        "SELECT\n",
+        "  pipeline_id,\n",
+        "  date_trunc('day', period_start_time) AS day,\n",
+        "  COUNT(*) AS updates,\n",
+        "  SUM(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS succeeded_updates,\n",
+        "  SUM(CASE WHEN UPPER(result_state) = 'FAILED'  THEN 1 ELSE 0 END) AS failed_updates,\n",
+        "  CASE WHEN COUNT(*) = 0 THEN NULL\n",
+        "       ELSE SUM(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) / COUNT(*)\n",
+        "  END AS success_rate,\n",
+        "  percentile_approx(\n",
+        "    UNIX_TIMESTAMP(period_end_time) - UNIX_TIMESTAMP(period_start_time),\n",
+        "    0.95\n",
+        "  ) AS p95_update_duration_sec\n",
+        "FROM system.lakeflow.pipeline_update_timeline\n",
+        "WHERE period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY pipeline_id, date_trunc('day', period_start_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "warehouse_uptime_daily",
+      "displayName": "Warehouse Uptime (daily)",
+      "queryLines": [
+        "WITH events AS (\n",
+        "  SELECT\n",
+        "    warehouse_id,\n",
+        "    event_time,\n",
+        "    event_type,\n",
+        "    LEAD(event_time) OVER (PARTITION BY warehouse_id ORDER BY event_time) AS next_time\n",
+        "  FROM system.compute.warehouse_events\n",
+        "  WHERE event_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        ")\n",
+        "SELECT\n",
+        "  warehouse_id,\n",
+        "  date_trunc('day', event_time) AS day,\n",
+        "  SUM(CASE WHEN event_type = 'RUNNING'\n",
+        "           THEN COALESCE(UNIX_TIMESTAMP(next_time) - UNIX_TIMESTAMP(event_time), 0)\n",
+        "           ELSE 0 END) / 86400.0 AS running_ratio\n",
+        "FROM events\n",
+        "GROUP BY warehouse_id, date_trunc('day', event_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "compute"
+    },
+    {
+      "name": "node_utilization_hourly",
+      "displayName": "Node Utilization (hourly)",
+      "queryLines": [
+        "SELECT\n",
+        "  cluster_id,\n",
+        "  instance_id,\n",
+        "  date_trunc('hour', start_time) AS hour,\n",
+        "  AVG(cpu_user_percent + cpu_system_percent) AS avg_cpu_percent,\n",
+        "  AVG(mem_used_percent) AS avg_mem_percent\n",
+        "FROM system.compute.node_timeline\n",
+        "WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 7 DAYS\n",
+        "GROUP BY cluster_id, instance_id, date_trunc('hour', start_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "compute"
+    },
+    {
+      "name": "query_history_detail",
+      "displayName": "Query History Detail",
+      "queryLines": [
+        "SELECT\n",
+        "  statement_id,\n",
+        "  compute.warehouse_id   AS warehouse_id,\n",
+        "  executed_by            AS user_email,\n",
+        "  start_time,\n",
+        "  end_time,\n",
+        "  (UNIX_TIMESTAMP(end_time) - UNIX_TIMESTAMP(start_time)) * 1000 AS duration_ms,\n",
+        "  read_rows,\n",
+        "  produced_rows,\n",
+        "  execution_status,\n",
+        "  error_message,\n",
+        "  MD5(COALESCE(statement_text,'')) AS statement_text_hash\n",
+        "FROM system.query.history\n",
+        "WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n"
+      ],
+      "catalog": "system",
+      "schema": "query"
+    },
+    {
+      "name": "query_p95_daily",
+      "displayName": "Query P95 & Failures (daily)",
+      "queryLines": [
+        "SELECT\n",
+        "  compute.warehouse_id AS warehouse_id,\n",
+        "  date_trunc('day', start_time) AS day,\n",
+        "  percentile_approx(\n",
+        "    (UNIX_TIMESTAMP(end_time) - UNIX_TIMESTAMP(start_time)) * 1000,\n",
+        "    0.95\n",
+        "  ) AS p95_duration_ms,\n",
+        "  SUM(CASE WHEN UPPER(execution_status) = 'FAILED' THEN 1 ELSE 0 END) AS failed_queries\n",
+        "FROM system.query.history\n",
+        "WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY compute.warehouse_id, date_trunc('day', start_time)\n"
+      ],
+      "catalog": "system",
+      "schema": "query"
+    },
+    {
+      "name": "cost_attribution_daily",
+      "displayName": "Cost Attribution (daily)",
+      "queryLines": [
+        "SELECT\n",
+        "  CASE\n",
+        "    WHEN u.usage_metadata.job_id IS NOT NULL THEN 'JOB'\n",
+        "    WHEN u.usage_metadata.dlt_pipeline_id IS NOT NULL THEN 'PIPELINE'\n",
+        "    WHEN u.usage_metadata.warehouse_id IS NOT NULL THEN 'WAREHOUSE'\n",
+        "    ELSE 'OTHER'\n",
+        "  END AS object_type,\n",
+        "  COALESCE(\n",
+        "    u.usage_metadata.job_id,\n",
+        "    u.usage_metadata.dlt_pipeline_id,\n",
+        "    u.usage_metadata.warehouse_id,\n",
+        "    'N/A'\n",
+        "  ) AS object_id,\n",
+        "  date_trunc('day', u.usage_start_time) AS day,\n",
+        "  SUM(CASE WHEN u.usage_unit = 'DBU'\n",
+        "           THEN u.usage_quantity * CAST(p.pricing.effective_list.default AS DOUBLE)\n",
+        "           ELSE 0 END) AS cost_usd,\n",
+        "  SUM(CASE WHEN u.usage_unit = 'DBU' THEN u.usage_quantity ELSE 0 END) AS dbu\n",
+        "FROM system.billing.usage u\n",
+        "LEFT JOIN system.billing.list_prices p\n",
+        "  ON u.sku_name = p.sku_name\n",
+        " AND u.usage_start_time >= p.price_start_time\n",
+        " AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "WHERE u.usage_unit = 'DBU'\n",
+        "  AND u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY 1,2,3\n"
+      ],
+      "catalog": "system",
+      "schema": "billing"
+    },
+    {
+      "name": "needs_attention_daily",
+      "displayName": "Needs Attention Flags",
+      "queryLines": [
+        "WITH job_agg AS (\n",
+        "  SELECT\n",
+        "    job_id,\n",
+        "    date_trunc('day', period_start_time) AS day,\n",
+        "    COUNT(*) AS runs,\n",
+        "    AVG(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS success_rate,\n",
+        "    percentile_approx(\n",
+        "      UNIX_TIMESTAMP(period_end_time) - UNIX_TIMESTAMP(period_start_time),\n",
+        "      0.95\n",
+        "    ) AS p95_dur\n",
+        "  FROM system.lakeflow.job_run_timeline\n",
+        "  WHERE period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "  GROUP BY job_id, date_trunc('day', period_start_time)\n",
+        "),\n",
+        "job_wow AS (\n",
+        "  SELECT\n",
+        "    job_id, day, success_rate, p95_dur,\n",
+        "    LAG(p95_dur) OVER (PARTITION BY job_id ORDER BY day) AS p95_prev\n",
+        "  FROM job_agg\n",
+        ")\n",
+        "SELECT\n",
+        "  'JOB' AS entity_type,\n",
+        "  CAST(job_id AS STRING) AS entity_id,\n",
+        "  day,\n",
+        "  CASE\n",
+        "    WHEN success_rate < 0.95 THEN 'RED'\n",
+        "    WHEN success_rate < 0.98 THEN 'YELLOW'\n",
+        "    WHEN p95_prev IS NOT NULL\n",
+        "         AND (p95_dur - p95_prev) / p95_prev > 0.25 THEN 'YELLOW'\n",
+        "    ELSE 'GREEN'\n",
+        "  END AS flag,\n",
+        "  success_rate,\n",
+        "  p95_dur\n",
+        "FROM job_wow\n"
+      ],
+      "catalog": "system",
+      "schema": "lakeflow"
+    },
+    {
+      "name": "warehouse_efficiency_daily",
+      "displayName": "Warehouse Efficiency",
+      "queryLines": [
+        "WITH uptime AS (\n",
+        "  WITH e AS (\n",
+        "    SELECT\n",
+        "      warehouse_id,\n",
+        "      event_time,\n",
+        "      event_type,\n",
+        "      LEAD(event_time) OVER (PARTITION BY warehouse_id ORDER BY event_time) AS next_time\n",
+        "    FROM system.compute.warehouse_events\n",
+        "    WHERE event_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "  )\n",
+        "  SELECT\n",
+        "    warehouse_id,\n",
+        "    date_trunc('day', event_time) AS day,\n",
+        "    SUM(CASE WHEN event_type = 'RUNNING'\n",
+        "             THEN COALESCE(UNIX_TIMESTAMP(next_time) - UNIX_TIMESTAMP(event_time), 0)\n",
+        "             ELSE 0 END) / 60 AS running_minutes\n",
+        "  FROM e\n",
+        "  GROUP BY warehouse_id, date_trunc('day', event_time)\n",
+        "),\n",
+        "q AS (\n",
+        "  SELECT\n",
+        "    compute.warehouse_id AS warehouse_id,\n",
+        "    date_trunc('day', start_time) AS day,\n",
+        "    COUNT(*) AS queries\n",
+        "  FROM system.query.history\n",
+        "  WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "  GROUP BY compute.warehouse_id, date_trunc('day', start_time)\n",
+        ")\n",
+        "SELECT\n",
+        "  u.warehouse_id,\n",
+        "  u.day,\n",
+        "  (u.running_minutes / 1440.0) AS running_ratio,\n",
+        "  COALESCE(q.queries, 0) AS queries,\n",
+        "  CASE\n",
+        "    WHEN u.running_minutes > 0 THEN\n",
+        "      GREATEST(0.0, 1.0 - (COALESCE(q.queries, 0) / u.running_minutes))\n",
+        "    ELSE 0.0\n",
+        "  END AS idle_ratio_est\n",
+        "FROM uptime u\n",
+        "LEFT JOIN q\n",
+        "  ON u.warehouse_id = q.warehouse_id\n",
+        " AND u.day = q.day\n"
+      ],
+      "catalog": "system",
+      "schema": "compute"
+    },
+    {
+      "name": "executive_overview_rollup",
+      "displayName": "Executive Overview Rollup",
+      "queryLines": [
+        "WITH cost_data AS (\n",
+        "  SELECT\n",
+        "    SUM(CASE WHEN u.usage_unit = 'DBU'\n",
+        "             THEN u.usage_quantity * CAST(p.pricing.effective_list.default AS DOUBLE)\n",
+        "             ELSE 0 END) AS cost_usd,\n",
+        "    SUM(CASE WHEN u.usage_unit = 'DBU' THEN u.usage_quantity ELSE 0 END) AS dbu\n",
+        "  FROM system.billing.usage u\n",
+        "  LEFT JOIN system.billing.list_prices p\n",
+        "    ON u.sku_name = p.sku_name\n",
+        "   AND u.usage_start_time >= p.price_start_time\n",
+        "   AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "  WHERE u.usage_unit = 'DBU'\n",
+        "    AND u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "),\n",
+        "jobs AS (\n",
+        "  SELECT\n",
+        "    AVG(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS job_success_rate,\n",
+        "    percentile_approx(\n",
+        "      UNIX_TIMESTAMP(period_end_time) - UNIX_TIMESTAMP(period_start_time),\n",
+        "      0.95\n",
+        "    ) AS job_p95_sec\n",
+        "  FROM system.lakeflow.job_run_timeline\n",
+        "  WHERE period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "),\n",
+        "pipelines AS (\n",
+        "  SELECT\n",
+        "    AVG(CASE WHEN UPPER(result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS pipeline_success_rate\n",
+        "  FROM system.lakeflow.pipeline_update_timeline\n",
+        "  WHERE period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "),\n",
+        "queries AS (\n",
+        "  SELECT\n",
+        "    percentile_approx(\n",
+        "      (UNIX_TIMESTAMP(end_time) - UNIX_TIMESTAMP(start_time)) * 1000,\n",
+        "      0.95\n",
+        "    ) AS query_p95_ms\n",
+        "  FROM system.query.history\n",
+        "  WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        ")\n",
+        "SELECT\n",
+        "  cost_usd,\n",
+        "  dbu,\n",
+        "  cost_usd / NULLIF(dbu, 0) AS usd_per_dbu,\n",
+        "  job_success_rate,\n",
+        "  job_p95_sec,\n",
+        "  pipeline_success_rate,\n",
+        "  query_p95_ms\n",
+        "FROM cost_data, jobs, pipelines, queries\n"
+      ],
+      "catalog": "system",
+      "schema": "billing"
+    },
+    {
+      "name": "cost_per_user_3afae8",
+      "displayName": "Cost per User (last 30 days)",
+      "queryLines": [
+        "WITH prices AS (\n",
+        "  SELECT sku_name, price_start_time, price_end_time, CAST(pricing.effective_list.default AS DOUBLE) AS unit_price\n",
+        "  FROM system.billing.list_prices\n",
+        "),\n",
+        "usage_priced AS (\n",
+        "  SELECT u.identity_metadata.run_as AS user_or_sp,\n",
+        "         u.usage_start_time,\n",
+        "         u.usage_unit,\n",
+        "         u.usage_quantity,\n",
+        "         p.unit_price\n",
+        "  FROM system.billing.usage u\n",
+        "  LEFT JOIN prices p\n",
+        "    ON u.sku_name = p.sku_name\n",
+        "   AND u.usage_start_time >= p.price_start_time\n",
+        "   AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "  WHERE u.usage_unit = 'DBU'\n",
+        "    AND u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "),\n",
+        "agg AS (\n",
+        "  SELECT COALESCE(user_or_sp, 'UNKNOWN') AS user_or_sp,\n",
+        "         SUM(usage_quantity * unit_price) AS cost_usd,\n",
+        "         SUM(usage_quantity) AS dbu\n",
+        "  FROM usage_priced\n",
+        "  GROUP BY COALESCE(user_or_sp, 'UNKNOWN')\n",
+        ")\n",
+        "SELECT user_or_sp, cost_usd, dbu\n",
+        "FROM agg\n",
+        "ORDER BY cost_usd DESC\n",
+        "LIMIT 10\n"
+      ],
+      "catalog": "system",
+      "schema": "billing"
+    },
+    {
+      "name": "cost_attr_by_type_deadd9c5",
+      "displayName": "Cost Attribution by Type (last 30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  CASE\n",
+        "    WHEN u.usage_metadata.job_id IS NOT NULL THEN 'JOB'\n",
+        "    WHEN u.usage_metadata.dlt_pipeline_id IS NOT NULL THEN 'PIPELINE'\n",
+        "    WHEN u.usage_metadata.warehouse_id IS NOT NULL THEN 'WAREHOUSE'\n",
+        "    ELSE 'OTHER'\n",
+        "  END AS object_type,\n",
+        "  SUM(\n",
+        "    CASE\n",
+        "      WHEN u.usage_unit = 'DBU' THEN u.usage_quantity * CAST(p.pricing.effective_list.default AS DOUBLE)\n",
+        "      ELSE 0\n",
+        "    END\n",
+        "  ) AS total_cost,\n",
+        "  SUM(\n",
+        "    CASE\n",
+        "      WHEN u.usage_unit = 'DBU' THEN u.usage_quantity\n",
+        "      ELSE 0\n",
+        "    END\n",
+        "  ) AS total_dbu\n",
+        "FROM system.billing.usage u\n",
+        "LEFT JOIN system.billing.list_prices p\n",
+        "  ON u.sku_name = p.sku_name\n",
+        "  AND u.usage_start_time >= p.price_start_time\n",
+        "  AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "WHERE u.usage_unit = 'DBU'\n",
+        "  AND u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY object_type\n",
+        "ORDER BY total_cost DESC"
+      ]
+    },
+    {
+      "name": "job_success_list_f8cec8c8",
+      "displayName": "Successful Job Runs (last 30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  jrt.job_id,\n",
+        "  COALESCE(j.name, jrt.run_name) AS job_name,\n",
+        "  SUM(CASE WHEN UPPER(jrt.result_state) = 'SUCCESS' THEN 1 ELSE 0 END) AS success_runs,\n",
+        "  COUNT(*) AS total_runs\n",
+        "FROM system.lakeflow.job_run_timeline jrt\n",
+        "LEFT JOIN system.lakeflow.jobs j\n",
+        "  ON jrt.workspace_id = j.workspace_id\n",
+        "  AND jrt.job_id = j.job_id\n",
+        "WHERE jrt.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY jrt.job_id, COALESCE(j.name, jrt.run_name)\n",
+        "ORDER BY success_runs DESC"
+      ]
+    },
+    {
+      "name": "job_failed_list_7119a80f",
+      "displayName": "Failed Job Runs (last 30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  jrt.job_id,\n",
+        "  COALESCE(j.name, jrt.run_name) AS job_name,\n",
+        "  SUM(CASE WHEN UPPER(jrt.result_state) = 'FAILED' THEN 1 ELSE 0 END) AS failed_runs,\n",
+        "  COUNT(*) AS total_runs\n",
+        "FROM system.lakeflow.job_run_timeline jrt\n",
+        "LEFT JOIN system.lakeflow.jobs j\n",
+        "  ON jrt.workspace_id = j.workspace_id\n",
+        "  AND jrt.job_id = j.job_id\n",
+        "WHERE jrt.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY jrt.job_id, COALESCE(j.name, jrt.run_name)\n",
+        "ORDER BY failed_runs DESC"
+      ]
+    },
+    {
+      "name": "cluster_util_status_1173f2d7",
+      "displayName": "Cluster Utilization Breakdown (last 30 days)",
+      "queryLines": [
+        "WITH per_cluster AS (\n",
+        "  SELECT\n",
+        "    cluster_id,\n",
+        "    CASE\n",
+        "      WHEN AVG(cpu_user_percent + cpu_system_percent) > 80 THEN 'Overutilized'\n",
+        "      WHEN AVG(cpu_user_percent + cpu_system_percent) < 20 THEN 'Underutilized'\n",
+        "      ELSE 'Optimal'\n",
+        "    END AS utilization_status\n",
+        "  FROM system.compute.node_timeline\n",
+        "  WHERE start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "  GROUP BY cluster_id\n",
+        "),\n",
+        "counts AS (\n",
+        "  SELECT utilization_status, COUNT(*) AS cluster_count\n",
+        "  FROM per_cluster\n",
+        "  GROUP BY utilization_status\n",
+        "),\n",
+        "total AS (\n",
+        "  SELECT SUM(cluster_count) AS total_clusters FROM counts\n",
+        ")\n",
+        "SELECT\n",
+        "  c.utilization_status,\n",
+        "  c.cluster_count,\n",
+        "  c.cluster_count / total.total_clusters AS cluster_ratio\n",
+        "FROM counts c, total\n",
+        "ORDER BY c.utilization_status"
+      ]
+    },
+    {
+      "name": "job_attention_fa4e28ac",
+      "displayName": "Job Health Summary (last 30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  jrt.job_id,\n",
+        "  COALESCE(j.name, jrt.run_name) AS job_name,\n",
+        "  COUNT(*) AS total_runs,\n",
+        "  SUM(CASE WHEN UPPER(jrt.result_state) = 'FAILED' THEN 1 ELSE 0 END) AS failed_runs,\n",
+        "  CASE\n",
+        "    WHEN COUNT(*) = 0 THEN 0\n",
+        "    ELSE SUM(CASE WHEN UPPER(jrt.result_state) = 'FAILED' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)\n",
+        "  END AS failure_rate,\n",
+        "  percentile_approx(\n",
+        "    UNIX_TIMESTAMP(jrt.period_end_time) - UNIX_TIMESTAMP(jrt.period_start_time),\n",
+        "    0.95\n",
+        "  ) AS p95_duration_sec\n",
+        "FROM system.lakeflow.job_run_timeline jrt\n",
+        "LEFT JOIN system.lakeflow.jobs j\n",
+        "  ON jrt.workspace_id = j.workspace_id\n",
+        "  AND jrt.job_id = j.job_id\n",
+        "WHERE jrt.period_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY jrt.job_id, COALESCE(j.name, jrt.run_name)\n",
+        "ORDER BY failure_rate DESC, p95_duration_sec DESC"
+      ]
+    },
+    {
+      "name": "top_jobs_by_cost_745a9c32",
+      "displayName": "Top Jobs by Cost (last 30 days)",
+      "queryLines": [
+        "SELECT\n",
+        "  u.usage_metadata.job_id AS job_id,\n",
+        "  SUM(u.usage_quantity) AS dbu,\n",
+        "  SUM(u.usage_quantity * CAST(p.pricing.effective_list.default AS DOUBLE)) AS cost_usd\n",
+        "FROM system.billing.usage u\n",
+        "LEFT JOIN system.billing.list_prices p\n",
+        "  ON u.sku_name = p.sku_name\n",
+        "  AND u.usage_start_time >= p.price_start_time\n",
+        "  AND (u.usage_start_time < p.price_end_time OR p.price_end_time IS NULL)\n",
+        "WHERE u.usage_unit = 'DBU'\n",
+        "  AND u.usage_metadata.job_id IS NOT NULL\n",
+        "  AND u.usage_start_time >= CURRENT_TIMESTAMP() - INTERVAL 30 DAYS\n",
+        "GROUP BY u.usage_metadata.job_id\n",
+        "ORDER BY cost_usd DESC\n",
+        "LIMIT 10"
+      ],
+      "catalog": "system",
+      "schema": "billing"
+    }
+  ],
+  "pages": [
+    {
+      "name": "readme_page",
+      "displayName": "Read Me",
+      "layout": [
+        {
+          "widget": {
+            "name": "496f75b5",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### 📊 Dashboard Overview<br>\n",
+                "\n",
+                "<br>This dashboard pulls directly from Databricks system tables to surface key operational metrics – cost, usage, reliability and performance – all in one place. Because it runs on your lakehouse, you get near‑real‑time data without any extract or replication step.Why it matters: having these insights at your fingertips helps you make better decisions around spend, capacity and reliability, while staying within Databricks’ native governance and security framework."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "302fd990",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### 🧾 Business Overview Page\n",
+                "\n",
+                "<br>This page is your high‑level health check. It includes numeric tiles for Total Cost, DBUs consumed, USD per DBU, Job Success Rate, Pipeline Success Rate, Query P95 Duration and more. Beneath those tiles you’ll find the following visualizations, each occupying a full row for easy reading:<br><br>- Daily Cost and DBUs by SKU: Bar and line charts (with a SKU filter) show how consumption and spend change over time. For example, if cost climbs while DBUs remain flat, that may signal a price change or inefficiency.<br><br>- Job & Pipeline Reliability: Line charts display success rates and P95 durations, while stacked bars show run counts. You can quickly spot reliability regressions or long‑running tasks.<br><br>- Task Mix by Type: A bar chart summarizes which task types (e.g. notebooks, DLT pipelines) are used most often.<br><br>- Cost Distribution by Object Type: A pie chart breaks down spend across jobs, pipelines, warehouses and other objects, highlighting where the biggest slices of your budget go.<br><br>- Top Users by Cost: This bar chart attributes spend to individual users or service principals using the identity\\_metadata.run\\_as field<br><br>- Job Health Summary: A sortable table lists each job with its total runs, failed runs, failure rate and 95th‑percentile duration. Sorting by failure rate or duration makes it obvious which jobs need investigation.<br><br>All of these charts react to the global filters at the top of the page (date range and SKU), so you can drill down to a specific time period or service category."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "ef1c9a46",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### ⚙️ Technical & Performance Page\n",
+                "\n",
+                "<br>This page is for the practitioners – platform engineers, FinOps analysts and SREs – who need to diagnose performance issues and optimise resources. Charts include:<br><br>- Warehouse Running Ratio: Shows what percentage of each day warehouses spend in a RUNNING state, helping you assess auto‑stop and scheduling efficiency.<br><br>- Node CPU vs Memory Utilization: A scatter plot of average CPU vs. memory utilization for each cluster over the last seven days, revealing under‑ or over‑provisioned compute.<br><br>- Average CPU Usage by Hour: Highlights diurnal patterns and when clusters are most taxed.Query Performance: A scatter plot correlating query duration with rows read, plus a line chart for 95th‑percentile query duration and a bar chart of failed query counts.<br><br>- Warehouse Efficiency & Idle Ratio: Compares run time against query volumes to estimate idle time – a high idle ratio suggests over‑provisioning.<br><br>- Cluster Utilisation Status: Bar chart classifying clusters as Overutilized (>80 % CPU), Underutilized (<20 %) or Optimal, helping you target scale‑up or scale‑down actions.<br><br>- Successful vs Failed Job Runs: Two tables showing which jobs are running successfully and which are failing most often, with run counts for context.<br><br>All charts can be filtered by date range and other selectors, and clicking data points will cross‑filter the rest of the page."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "26b994a5",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### 🕹️ How to Use the DashboardUse the interactive controls to focus on what matters:<br>\n",
+                "\n",
+                "<br>-Date & SKU Filters: Choose a time window or service SKU to narrow the scope of all charts.<br><br>-Cross‑filtering: Click on a bar or line segment to filter other charts to the same subset. For example, clicking a spike in the Query Duration vs Rows chart filters all charts to that day and reveals which jobs or pipelines caused the latency.<br><br>-Sorting & Drill‑Down: In the Job Health Summary table, sort by failure rate or P95 duration to identify problem jobs, then click the job ID to investigate further in Databricks."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "75535ec9",
+      "displayName": "Business Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "cd3cf0e4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "cost_usd",
+                      "expression": "`cost_usd`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "cost_usd",
+                  "displayName": "Cost USD"
+                }
+              },
+              "frame": {
+                "title": "Cost USD",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "81725275",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "dbu",
+                      "expression": "`dbu`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "dbu",
+                  "displayName": "DBU"
+                }
+              },
+              "frame": {
+                "title": "DBU",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "cd161c55",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "usd_per_dbu",
+                      "expression": "`usd_per_dbu`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "usd_per_dbu",
+                  "displayName": "USD per DBU"
+                }
+              },
+              "frame": {
+                "title": "USD per DBU",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "698d0b4e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "pipeline_success_rate",
+                      "expression": "`pipeline_success_rate`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "pipeline_success_rate",
+                  "displayName": "Pipeline Success Rate"
+                }
+              },
+              "frame": {
+                "title": "Pipeline Success Rate",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c53ced92",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "job_success_rate",
+                      "expression": "`job_success_rate`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "job_success_rate",
+                  "displayName": "Job Success Rate"
+                }
+              },
+              "frame": {
+                "title": "Job Success Rate",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "85e42797",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "job_p95_sec",
+                      "expression": "`job_p95_sec`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "job_p95_sec",
+                  "displayName": "Job P95 Sec"
+                }
+              },
+              "frame": {
+                "title": "Job P95 Sec",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "385f4c99",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "executive_overview_rollup",
+                  "fields": [
+                    {
+                      "name": "query_p95_ms",
+                      "expression": "`query_p95_ms`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "query_p95_ms",
+                  "displayName": "Query P95 (ms)"
+                }
+              },
+              "frame": {
+                "title": "Query P95 (ms)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "00cc2e31",
+            "queries": [
+              {
+                "name": "cost_usage_daily_sku_filter",
+                "query": {
+                  "datasetName": "cost_usage_daily",
+                  "fields": [
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    },
+                    {
+                      "name": "sku_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "sku_name",
+                    "displayName": "SKU",
+                    "queryName": "cost_usage_daily_sku_filter"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SKU"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "55bb0d88",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Job Health SummaryShows failure rate and P95 duration for each job over the last 30 days.Sorts jobs by highest failure rate and longest P95 durations.Use this table to identify jobs that may need optimization."
+              ]
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 9,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "72237905",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_attention_fa4e28ac",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_name",
+                      "expression": "`job_name`"
+                    },
+                    {
+                      "name": "total_runs",
+                      "expression": "`total_runs`"
+                    },
+                    {
+                      "name": "failed_runs",
+                      "expression": "`failed_runs`"
+                    },
+                    {
+                      "name": "failure_rate",
+                      "expression": "`failure_rate`"
+                    },
+                    {
+                      "name": "p95_duration_sec",
+                      "expression": "`p95_duration_sec`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "job_id",
+                    "displayName": "Job ID",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 0,
+                    "width": 150
+                  },
+                  {
+                    "fieldName": "job_name",
+                    "displayName": "Job Name",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 1,
+                    "width": 200
+                  },
+                  {
+                    "fieldName": "total_runs",
+                    "displayName": "Runs",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 2,
+                    "width": 100
+                  },
+                  {
+                    "fieldName": "failed_runs",
+                    "displayName": "Failed Runs",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 3,
+                    "width": 100
+                  },
+                  {
+                    "fieldName": "failure_rate",
+                    "displayName": "Failure Rate",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 4,
+                    "width": 150
+                  },
+                  {
+                    "fieldName": "p95_duration_sec",
+                    "displayName": "P95 Duration (s)",
+                    "columnType": "text",
+                    "visible": true,
+                    "index": 5,
+                    "width": 150
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Job Health Summary",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "6d4012cf",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_usage_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    },
+                    {
+                      "name": "cost_usd",
+                      "expression": "`cost_usd`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "cost_usd",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Cost USD"
+                },
+                "color": {
+                  "fieldName": "sku_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "SKU"
+                }
+              },
+              "frame": {
+                "title": "Daily Cost by SKU",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "fc0c3581",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_usage_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "sku_name",
+                      "expression": "`sku_name`"
+                    },
+                    {
+                      "name": "dbu",
+                      "expression": "`dbu`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "dbu",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "DBU"
+                },
+                "color": {
+                  "fieldName": "sku_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "SKU"
+                }
+              },
+              "frame": {
+                "title": "Daily DBUs by SKU",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "d22f78d7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_reliability_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "runs",
+                      "expression": "`runs`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "runs",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Runs"
+                },
+                "color": {
+                  "fieldName": "job_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Job ID"
+                }
+              },
+              "frame": {
+                "title": "Job Runs Count by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "b6767ea4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_reliability_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "success_rate",
+                      "expression": "`success_rate`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "success_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Success Rate"
+                },
+                "color": {
+                  "fieldName": "job_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Job ID"
+                }
+              },
+              "frame": {
+                "title": "Job Success Rate by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6ab0ffba",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_reliability_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "p95_duration_sec",
+                      "expression": "`p95_duration_sec`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "p95_duration_sec",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "P95 Duration (s)"
+                },
+                "color": {
+                  "fieldName": "job_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Job ID"
+                }
+              },
+              "frame": {
+                "title": "Job P95 Duration by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "82d1f0b1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_task_mix",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "task_key",
+                      "expression": "`task_key`"
+                    },
+                    {
+                      "name": "task_runs",
+                      "expression": "`task_runs`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "task_runs",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Task Runs"
+                },
+                "color": {
+                  "fieldName": "task_key",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Task Key"
+                }
+              },
+              "frame": {
+                "title": "Job Task Mix by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 37,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "c259b76c",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "pipeline_reliability_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "pipeline_id",
+                      "expression": "`pipeline_id`"
+                    },
+                    {
+                      "name": "success_rate",
+                      "expression": "`success_rate`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "success_rate",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Success Rate"
+                },
+                "color": {
+                  "fieldName": "pipeline_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Pipeline ID"
+                }
+              },
+              "frame": {
+                "title": "Pipeline Success Rate by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 42,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "dad9e47d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "pipeline_reliability_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "pipeline_id",
+                      "expression": "`pipeline_id`"
+                    },
+                    {
+                      "name": "p95_update_duration_sec",
+                      "expression": "`p95_update_duration_sec`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "p95_update_duration_sec",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "P95 Duration (s)"
+                },
+                "color": {
+                  "fieldName": "pipeline_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Pipeline ID"
+                }
+              },
+              "frame": {
+                "title": "Pipeline P95 Duration by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 47,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "e33f4051",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_attr_by_type_deadd9c5",
+                  "fields": [
+                    {
+                      "name": "object_type",
+                      "expression": "`object_type`"
+                    },
+                    {
+                      "name": "total_cost",
+                      "expression": "`total_cost`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "total_cost",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Total Cost"
+                },
+                "color": {
+                  "fieldName": "object_type",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Object Type"
+                }
+              },
+              "frame": {
+                "title": "Cost Distribution by Object Type",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 52,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "d6f2c3ed",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_per_user_3afae8",
+                  "fields": [
+                    {
+                      "name": "user_or_sp",
+                      "expression": "`user_or_sp`"
+                    },
+                    {
+                      "name": "cost_usd",
+                      "expression": "`cost_usd`"
+                    },
+                    {
+                      "name": "dbu",
+                      "expression": "`dbu`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "user_or_sp",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  },
+                  "displayName": "User/Service Principal"
+                },
+                "y": {
+                  "fieldName": "cost_usd",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Cost (USD)"
+                },
+                "color": {
+                  "fieldName": "user_or_sp",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "User/Service Principal"
+                }
+              },
+              "frame": {
+                "title": "Top Users by Cost (last 30 days)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 57,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "top_jobs_cost_widget",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_jobs_by_cost_745a9c32",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "cost_usd",
+                      "expression": "`cost_usd`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "job_id",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y",
+                      "direction": "desc"
+                    }
+                  },
+                  "displayName": "Job ID"
+                },
+                "y": {
+                  "fieldName": "cost_usd",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Cost USD"
+                },
+                "color": {
+                  "fieldName": "job_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Job ID"
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "title": "Top Jobs by Cost (last 30 days)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 62,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "e1a3dc22",
+      "displayName": "Technical & Performance",
+      "layout": [
+        {
+          "widget": {
+            "name": "ce6565a3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "warehouse_uptime_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "warehouse_id",
+                      "expression": "`warehouse_id`"
+                    },
+                    {
+                      "name": "running_ratio",
+                      "expression": "`running_ratio`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "running_ratio",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Running Ratio"
+                },
+                "color": {
+                  "fieldName": "warehouse_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Warehouse ID"
+                }
+              },
+              "frame": {
+                "title": "Warehouse Running Ratio by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6e4899db",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "node_utilization_hourly",
+                  "fields": [
+                    {
+                      "name": "avg_cpu_percent",
+                      "expression": "`avg_cpu_percent`"
+                    },
+                    {
+                      "name": "avg_mem_percent",
+                      "expression": "`avg_mem_percent`"
+                    },
+                    {
+                      "name": "cluster_id",
+                      "expression": "`cluster_id`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "avg_cpu_percent",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg CPU (%)"
+                },
+                "y": {
+                  "fieldName": "avg_mem_percent",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg Memory (%)"
+                },
+                "color": {
+                  "fieldName": "cluster_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Cluster ID"
+                }
+              },
+              "frame": {
+                "title": "Node CPU vs Memory Utilization",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "fedbf336",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "node_utilization_hourly",
+                  "fields": [
+                    {
+                      "name": "hour",
+                      "expression": "`hour`"
+                    },
+                    {
+                      "name": "cluster_id",
+                      "expression": "`cluster_id`"
+                    },
+                    {
+                      "name": "avg_cpu_percent",
+                      "expression": "`avg_cpu_percent`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "hour",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Hour"
+                },
+                "y": {
+                  "fieldName": "avg_cpu_percent",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Avg CPU (%)"
+                },
+                "color": {
+                  "fieldName": "cluster_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Cluster ID"
+                }
+              },
+              "frame": {
+                "title": "Average CPU Usage by Hour",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "483fbf7e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "query_history_detail",
+                  "fields": [
+                    {
+                      "name": "duration_ms",
+                      "expression": "`duration_ms`"
+                    },
+                    {
+                      "name": "read_rows",
+                      "expression": "`read_rows`"
+                    },
+                    {
+                      "name": "execution_status",
+                      "expression": "`execution_status`"
+                    },
+                    {
+                      "name": "produced_rows",
+                      "expression": "`produced_rows`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "duration_ms",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Duration (ms)"
+                },
+                "y": {
+                  "fieldName": "read_rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Read Rows"
+                },
+                "color": {
+                  "fieldName": "execution_status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                },
+                "size": {
+                  "fieldName": "produced_rows",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Produced Rows"
+                }
+              },
+              "frame": {
+                "title": "Query Duration vs Rows Read",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ec1a63ec",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "query_p95_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "warehouse_id",
+                      "expression": "`warehouse_id`"
+                    },
+                    {
+                      "name": "p95_duration_ms",
+                      "expression": "`p95_duration_ms`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "p95_duration_ms",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "P95 Duration (ms)"
+                },
+                "color": {
+                  "fieldName": "warehouse_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Warehouse ID"
+                }
+              },
+              "frame": {
+                "title": "Query P95 Duration by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "07520bd7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "query_p95_daily",
+                  "fields": [
+                    {
+                      "name": "day",
+                      "expression": "`day`"
+                    },
+                    {
+                      "name": "warehouse_id",
+                      "expression": "`warehouse_id`"
+                    },
+                    {
+                      "name": "failed_queries",
+                      "expression": "`failed_queries`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Day"
+                },
+                "y": {
+                  "fieldName": "failed_queries",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Failed Queries"
+                },
+                "color": {
+                  "fieldName": "warehouse_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Warehouse ID"
+                }
+              },
+              "frame": {
+                "title": "Failed Queries by Day",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 25,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "f0cd6132",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "warehouse_efficiency_daily",
+                  "fields": [
+                    {
+                      "name": "running_ratio",
+                      "expression": "`running_ratio`"
+                    },
+                    {
+                      "name": "idle_ratio_est",
+                      "expression": "`idle_ratio_est`"
+                    },
+                    {
+                      "name": "warehouse_id",
+                      "expression": "`warehouse_id`"
+                    },
+                    {
+                      "name": "queries",
+                      "expression": "`queries`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "running_ratio",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Running Ratio"
+                },
+                "y": {
+                  "fieldName": "idle_ratio_est",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Idle Ratio Est"
+                },
+                "color": {
+                  "fieldName": "warehouse_id",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Warehouse ID"
+                },
+                "size": {
+                  "fieldName": "queries",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Queries"
+                }
+              },
+              "frame": {
+                "title": "Warehouse Efficiency",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "3fca5190",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "warehouse_efficiency_daily",
+                  "fields": [
+                    {
+                      "name": "warehouse_id",
+                      "expression": "`warehouse_id`"
+                    },
+                    {
+                      "name": "idle_ratio_est",
+                      "expression": "`idle_ratio_est`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "`warehouse_id` IN (`warehouse_id`) OR TRUE"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "warehouse_id",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "idle_ratio_est",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Idle Ratio Est"
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "title": "Idle Ratio by Warehouse",
+                "showTitle": true,
+                "showDescription": false
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 35,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "e05057c7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_success_list_f8cec8c8",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_name",
+                      "expression": "`job_name`"
+                    },
+                    {
+                      "name": "success_runs",
+                      "expression": "`success_runs`"
+                    },
+                    {
+                      "name": "total_runs",
+                      "expression": "`total_runs`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "job_id",
+                    "type": "string",
+                    "displayName": "Job ID",
+                    "visible": true,
+                    "title": "Job ID"
+                  },
+                  {
+                    "fieldName": "job_name",
+                    "type": "string",
+                    "displayName": "Job Name",
+                    "visible": true,
+                    "title": "Job Name"
+                  },
+                  {
+                    "fieldName": "success_runs",
+                    "type": "integer",
+                    "displayName": "Successful Runs",
+                    "visible": true,
+                    "title": "Successful Runs"
+                  },
+                  {
+                    "fieldName": "total_runs",
+                    "type": "integer",
+                    "displayName": "Total Runs",
+                    "visible": true,
+                    "title": "Total Runs"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Successful Jobs",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "a8c8a9aa",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "job_failed_list_7119a80f",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_name",
+                      "expression": "`job_name`"
+                    },
+                    {
+                      "name": "failed_runs",
+                      "expression": "`failed_runs`"
+                    },
+                    {
+                      "name": "total_runs",
+                      "expression": "`total_runs`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "job_id",
+                    "type": "string",
+                    "displayName": "Job ID",
+                    "visible": true,
+                    "title": "Job ID"
+                  },
+                  {
+                    "fieldName": "job_name",
+                    "type": "string",
+                    "displayName": "Job Name",
+                    "visible": true,
+                    "title": "Job Name"
+                  },
+                  {
+                    "fieldName": "failed_runs",
+                    "type": "integer",
+                    "displayName": "Failed Runs",
+                    "visible": true,
+                    "title": "Failed Runs"
+                  },
+                  {
+                    "fieldName": "total_runs",
+                    "type": "integer",
+                    "displayName": "Total Runs",
+                    "visible": true,
+                    "title": "Total Runs"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Failed Jobs",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 45,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "24b85c95",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cluster_util_status_1173f2d7",
+                  "fields": [
+                    {
+                      "name": "utilization_status",
+                      "expression": "`utilization_status`"
+                    },
+                    {
+                      "name": "cluster_count",
+                      "expression": "`cluster_count`"
+                    },
+                    {
+                      "name": "cluster_ratio",
+                      "expression": "`cluster_ratio`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "utilization_status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                },
+                "y": {
+                  "fieldName": "cluster_ratio",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Cluster Ratio"
+                },
+                "color": {
+                  "fieldName": "utilization_status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "title": "Cluster Utilization Breakdown",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 50,
+            "width": 12,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "genieSpace": {
+      "isEnabled": true
+    }
+  }
+}
